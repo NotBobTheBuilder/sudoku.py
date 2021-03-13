@@ -6,6 +6,12 @@ from unittest import TestCase, main
 SQS = SUBSQUARE_SIZE = 3
 GRID_SIZE = SUBSQUARE_SIZE ** 2
 
+# all the indexes in a sudoku grid
+grid_indexes = [(i, j) for j in range(GRID_SIZE) for i in range(GRID_SIZE)]
+
+# A grid representation where any value can go anywhere
+blank_grid = defaultdict(lambda: set(range(1, 10)))
+
 def subsq_range(idx):
     '''
     Return the range of other cells in the same grid on this axis. E.g. 
@@ -37,14 +43,6 @@ def other_cells_affected(cell):
     return affected_cells
 
 
-def grid_indexes():
-    '''
-    Return all the indexes in a sudoku grid
-
-    '''
-    return [(i, j) for j in range(9) for i in range(9)]
-
-
 def read_grid(grid):
     '''
     Read grid values from a list of strings into pairs of (row, col) and value
@@ -54,14 +52,6 @@ def read_grid(grid):
         for colidx, cell in enumerate(row):
             if cell != ' ':
                 yield ((rowidx, colidx), int(cell))
-
-
-def blank_grid():
-    '''
-    A grid representation where any value can go anywhere
-
-    '''
-    return defaultdict(lambda: set(range(1, 10)))
 
 
 class SudokuGrid(object):
@@ -83,7 +73,7 @@ class SudokuGrid(object):
         Remove possible other positions that would conflict with these places
 
         '''
-        self.grid = ChainMap({}, blank_grid())
+        self.grid = ChainMap({}, blank_grid)
 
         for cell, value in grid:
             self.set_cell(cell, value)
@@ -114,7 +104,7 @@ class SudokuGrid(object):
         yield 
         self.grid = self.grid.parents
 
-    def solutions(self, remaining_cells=grid_indexes()):
+    def solutions(self, remaining_cells=grid_indexes):
         '''
         Enumerate all the solutions to this grid by depth first search
 
@@ -140,9 +130,9 @@ class SudokuGrid(object):
 
         '''
         formatted_grid = []
-        for r in range(9):
+        for r in range(GRID_SIZE):
             row = ''
-            for c in range(9):
+            for c in range(GRID_SIZE):
                 value = self.grid[r,c]
                 row += str(next(iter(value))) if len(value) == 1 else '.'
             formatted_grid.append(row)
@@ -208,18 +198,17 @@ class SudokuTests(TestCase):
                 self.assertIn((i, j), c)
 
     def test_grid_indexes(self):
-        self.assertEqual(9*9, len(set(grid_indexes())))
+        self.assertEqual(GRID_SIZE**2, len(set(grid_indexes)))
 
     def test_read_grid(self):
         self.assertEqual([((0,1), 1)], list(read_grid([' 1'])))
         self.assertEqual([((1,1), 1)], list(read_grid(['  ', ' 1'])))
 
     def test_blank_grid(self):
-        grid = blank_grid()
-        for idx in grid_indexes():
-            self.assertEqual(set(range(1, 10)), grid[idx])
-            self.assertNotIn(0, grid[idx])
-            self.assertNotIn(10, grid[idx])
+        for idx in grid_indexes:
+            self.assertEqual(set(range(1, 10)), blank_grid[idx])
+            self.assertNotIn(0, blank_grid[idx])
+            self.assertNotIn(10, blank_grid[idx])
 
     def test_grid_display(self):
         self.assertEqual(
