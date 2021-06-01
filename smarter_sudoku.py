@@ -23,13 +23,13 @@ def box_cells(box_position):
 
 
 def affected_positions(row, col):
-    for affected_row in range(1,10):
+    for affected_row in rows:
         if affected_row == row:
             continue
 
         yield (affected_row, col)
 
-    for affected_col in range(1,10):
+    for affected_col in cols:
         if affected_col == col:
             continue
 
@@ -78,7 +78,7 @@ class SudokuGrid(object):
 
     def __init__(self):
         self.placed_grid = {}
-        self.grid = { (row, col): set(range(1, 10)) 
+        self.grid = { (row, col): set(range(1, 10))
                       for row in rows for col in cols }
         self.strategies = [
             self.find_only_one_digit_in_cell,
@@ -110,16 +110,13 @@ class SudokuGrid(object):
         self.grid[(row, col)].remove(value)
 
     def row(self, row):
-        for col in cols:
-            yield row, col, self.grid[row, col]
+        return [(row, col, self.grid[row, col]) for col in cols]
 
     def col(self, col):
-        for row in rows:
-            yield row, col, self.grid[row, col]
+        return [(row, col, self.grid[row, col]) for row in rows]
 
     def box(self, box):
-        for row, col in box_cells(box):
-            yield row, col, self.grid[row, col]
+        return [(row, col, self.grid[row, col]) for row, col in box_cells(box)]
 
     def remaining_values(self, cells):
         return set(value for _, _, values in cells for value in values)
@@ -131,8 +128,8 @@ class SudokuGrid(object):
         for (row, col), values in self.grid.items():
             if len(values) == 1:
                 (value,) = values
-                yield Place(row, col, value)
-    
+                return Place(row, col, value)
+
     def find_only_one_place_in_row(self):
         for row in rows:
             occurrences = defaultdict(set)
@@ -143,7 +140,7 @@ class SudokuGrid(object):
             for value, positions in occurrences.items():
                 if len(positions) == 1:
                     (col,) = positions
-                    yield Place(row, col, value)
+                    return Place(row, col, value)
 
     def find_only_one_place_in_col(self):
         for col in cols:
@@ -155,161 +152,98 @@ class SudokuGrid(object):
             for value, positions in occurrences.items():
                 if len(positions) == 1:
                     (row,) = positions
-                    yield Place(row, col, value)
+                    return Place(row, col, value)
 
     def find_only_one_place_in_box(self):
         for box in boxes:
             for row, col, values in self.box(box):
                 if len(values) == 1:
                     (value,) = values
-                    yield Place(row, col, value)
+                    return Place(row, col, value)
 
     def find_digits_in_one_box_row(self):
         for box in boxes:
             box_row, box_col = box
             for digit in self.remaining_values(self.box(box)):
-                digit_rows = set()
-                for row in box_cell_axes(box_row):
-                    for _, col, values in self.row(row):
-                        if col not in box_cell_axes(box_col):
-                            continue
-                        if digit in values:
-                            digit_rows.add(row)
-                
+                digit_rows = set(row for row, _ in self.locations_for(digit, self.box(box)))
+
                 if len(digit_rows) == 1:
                     (row,) = digit_rows
                     for _, col, values in self.row(row):
                         if box_position(row, col) == box:
                             continue
                         if digit in values:
-                            yield Remove(row, col, digit)
+                            return Remove(row, col, digit)
 
     def find_digits_in_one_box_col(self):
         for box in boxes:
             box_row, box_col = box
             for digit in self.remaining_values(self.box(box)):
-                digit_cols = set()
-                for col in box_cell_axes(box_col):
-                    for row, _, values in self.col(col):
-                        if row not in box_cell_axes(box_row):
-                            continue
-                        if digit in values:
-                            digit_cols.add(col)
-                
+                digit_cols = set(col for _, col in self.locations_for(digit, self.box(box)))
+
                 if len(digit_cols) == 1:
                     (col,) = digit_cols
                     for row, _, values in self.col(col):
                         if box_position(row, col) == box:
                             continue
                         if digit in values:
-                            yield Remove(row, col, digit)
+                            return Remove(row, col, digit)
+
+    def find_subsets_in_cells(self, cells):
+        remaining_values = self.remaining_values(cells)
+        if len(remaining_values) < 2:
+            return
+
+        for fst_val, snd_val in combinations(remaining_values, 2):
+            fst_locations = self.locations_for(fst_val, cells)
+            snd_locations = self.locations_for(snd_val, cells)
+
+            common_locations = fst_locations & snd_locations
+            common_locations = set(loc for loc in common_locations
+                                   if self.grid[loc].issuperset(set([fst_val, snd_val])))
+            if len(common_locations) >= 2:
+                for (fst_loc, snd_loc) in combinations(common_locations, 2):
+                    # If these are the only 2 digits in these cells, these digits cannot appear elsewhere
+                    if self.grid[fst_loc] == self.grid[snd_loc] == set([fst_val, snd_val]):
+                        if len(fst_locations) > 2 or len(snd_locations) > 2:
+                            for other_row, other_col in fst_locations - common_locations:
+                                return Remove(other_row, other_col, fst_val)
+
+                            for other_row, other_col in snd_locations - common_locations:
+                                return Remove(other_row, other_col, snd_val)
+
+                    # If these are the only 2 places for these 2 digits, no other digits can appear here
+                    if len(fst_locations) == len(snd_locations) == 2:
+                        for val in self.grid[fst_loc] - set([fst_val, snd_val]):
+                            fst_row, fst_col = fst_loc
+                            return Remove(fst_row, fst_col, val)
+
+                        for val in self.grid[snd_loc] - set([fst_val, snd_val]):
+                            snd_row, snd_col = snd_loc
+                            return Remove(snd_row, snd_col, val)
+
 
     def find_subsets_in_row(self):
         for row in rows:
-            remaining_values = self.remaining_values(self.row(row))
-            if len(remaining_values) < 2:
-                continue
-
-            for fst_val, snd_val in combinations(remaining_values, 2):
-                fst_locations = self.locations_for(fst_val, self.row(row))
-                snd_locations = self.locations_for(snd_val, self.row(row))
-
-                common_locations = fst_locations & snd_locations
-                common_locations = set(loc for loc in common_locations 
-                                       if self.grid[loc].issuperset(set([fst_val, snd_val])))
-                if len(common_locations) == 2: 
-                    (fst_loc, snd_loc) = common_locations
-                    if len(fst_locations) > 2 or len(snd_locations) > 2:
-                        if self.grid[fst_loc] == self.grid[snd_loc] == set([fst_val, snd_val]):
-                            for other_row, other_col in fst_locations - common_locations:
-                                yield Remove(other_row, other_col, fst_val)
-
-                            for other_row, other_col in snd_locations - common_locations:
-                                yield Remove(other_row, other_col, snd_val)
-
-                    if len(fst_locations) == len(snd_locations) == 2:
-                        for val in self.grid[fst_loc] - set([fst_val, snd_val]):
-                            fst_row, fst_col = fst_loc
-                            yield Remove(fst_row, fst_col, val)
-
-                        for val in self.grid[snd_loc] - set([fst_val, snd_val]):
-                            snd_row, snd_col = snd_loc
-                            yield Remove(snd_row, snd_col, val)
-
-
+            if subsets := self.find_subsets_in_cells(self.row(row)):
+                return subsets
 
     def find_subsets_in_col(self):
         for col in cols:
-            remaining_values = self.remaining_values(self.col(col))
-            if len(remaining_values) < 2:
-                continue
-
-            for fst_val, snd_val in combinations(remaining_values, 2):
-                fst_locations = self.locations_for(fst_val, self.col(col))
-                snd_locations = self.locations_for(snd_val, self.col(col))
-
-                common_locations = fst_locations & snd_locations
-                common_locations = set(loc for loc in common_locations 
-                                       if self.grid[loc].issuperset(set([fst_val, snd_val])))
-                if len(common_locations) == 2: 
-                    (fst_loc, snd_loc) = common_locations
-                    if len(fst_locations) > 2 or len(snd_locations) > 2:
-                        if self.grid[fst_loc] == self.grid[snd_loc] == set([fst_val, snd_val]):
-                            for other_row, other_col in fst_locations - common_locations:
-                                yield Remove(other_row, other_col, fst_val)
-
-                            for other_row, other_col in snd_locations - common_locations:
-                                yield Remove(other_row, other_col, snd_val)
-
-                    if len(fst_locations) == len(snd_locations) == 2:
-                        for val in self.grid[fst_loc] - set([fst_val, snd_val]):
-                            fst_row, fst_col = fst_loc
-                            yield Remove(fst_row, fst_col, val)
-
-                        for val in self.grid[snd_loc] - set([fst_val, snd_val]):
-                            snd_row, snd_col = snd_loc
-                            yield Remove(snd_row, snd_col, val)
-
+            if subsets := self.find_subsets_in_cells(self.col(col)):
+                return subsets
 
     def find_subsets_in_box(self):
         for box in boxes:
-            remaining_values = self.remaining_values(self.box(box))
-            if len(remaining_values) < 2:
-                continue
-
-            for fst_val, snd_val in combinations(remaining_values, 2):
-                fst_locations = self.locations_for(fst_val, self.box(box))
-                snd_locations = self.locations_for(snd_val, self.box(box))
-
-                common_locations = fst_locations & snd_locations
-                common_locations = set(loc for loc in common_locations 
-                                       if self.grid[loc].issuperset(set([fst_val, snd_val])))
-                if len(common_locations) == 2: 
-                    (fst_loc, snd_loc) = common_locations
-                    if len(fst_locations) > 2 or len(snd_locations) > 2:
-                        if self.grid[fst_loc] == self.grid[snd_loc] == set([fst_val, snd_val]):
-                            for other_row, other_col in fst_locations - common_locations:
-                                yield Remove(other_row, other_col, fst_val)
-
-                            for other_row, other_col in snd_locations - common_locations:
-                                yield Remove(other_row, other_col, snd_val)
-
-                    if len(fst_locations) == len(snd_locations) == 2:
-                        for val in self.grid[fst_loc] - set([fst_val, snd_val]):
-                            fst_row, fst_col = fst_loc
-                            yield Remove(fst_row, fst_col, val)
-
-                        for val in self.grid[snd_loc] - set([fst_val, snd_val]):
-                            snd_row, snd_col = snd_loc
-                            yield Remove(snd_row, snd_col, val)
+            if subsets := self.find_subsets_in_cells(self.box(box)):
+                return subsets
 
 
     def find(self):
         while True:
             for strategy in self.strategies:
-                next_result = next(strategy(), None)
-                if next_result:
-                    next_result.perform(self)
+                if result := strategy():
+                    result.perform(self)
                     break
             else:
                 return
@@ -325,7 +259,7 @@ class SudokuGrid(object):
 
         for row in range(1, 10):
             if row in (4, 7):
-                grid_str.append('-'*12)
+                grid_str.append('-'*11)
             rowstr = ''
             for col in range(1, 10):
                 if col in (4, 7):
@@ -348,8 +282,21 @@ HARD_TEST_GRID = [
     '53  64  9'
 ]
 
-s = SudokuGrid()
+EXPERT_TEST_GRID = [
+'9   7   5',
+' 1   28  ',
+' 6       ',
+'       4 ',
+'  7 9    ',
+'  4 536 1',
+'   8 7   ',
+' 3       ',
+'  25 1  9',
+]
 
-s.load(HARD_TEST_GRID)
-s.find()
-print(s.formatted_grid())
+for puzzle in [HARD_TEST_GRID, EXPERT_TEST_GRID]:
+    s = SudokuGrid()
+
+    s.load(puzzle)
+    s.find()
+    print(s.formatted_grid())
